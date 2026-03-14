@@ -1,7 +1,47 @@
 import { useState, FormEvent, useEffect } from 'react';
-import { MapContainer, TileLayer, Circle, Tooltip } from 'react-leaflet';
+import { MapContainer, TileLayer, Circle, Tooltip, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet.heat';
 import 'leaflet/dist/leaflet.css';
 import './App.css';
+
+// Custom Heatmap Layer Component using leaflet.heat
+function HeatmapLayer({ points }: { points: any[] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map) return;
+
+    // Intensity normalization for a darker, more vibrant feel
+    const heatData = points.map(p => [
+      p.lat, 
+      p.lng, 
+      p.pm / 120 
+    ]);
+
+    const heatLayer = (L as any).heatLayer(heatData, {
+      radius: 45, // Larger radius for more overlap
+      blur: 25,   // Higher blur for smooth gradients
+      maxZoom: 10,
+      gradient: {
+        0.1: '#3182ce', // Cool (Blue)
+        0.2: '#4fd1c5', // Cyan
+        0.4: '#f6e05e', // Moderate (Yellow)
+        0.6: '#ed8936', // Hot (Orange)
+        0.8: '#e53e3e', // Severe (Red)
+        1.0: '#742a2a'  // Dangerous (Dark Maroon)
+      }
+    }).addTo(map);
+
+    return () => {
+      map.removeLayer(heatLayer);
+    };
+  }, [map, points]);
+
+  return null;
+}
+
+// ... existing interfaces ...
 
 interface Factor {
   feature: string;
@@ -42,6 +82,7 @@ const PUNE_CITIES: City[] = [
 
 function App() {
   const [view, setView] = useState<'predictor' | 'heatmap'>('predictor');
+  const [mapMode, setMapMode] = useState<'markers' | 'gradient'>('markers');
   const [isDarkMode, setIsDarkMode] = useState(document.documentElement.getAttribute('data-theme') === 'dark');
   const [useCity, setUseCity] = useState(true);
   const [selectedCity, setSelectedCity] = useState(PUNE_CITIES[1].name);
@@ -54,15 +95,39 @@ function App() {
   const [result, setResult] = useState<PredictionResult | null>(null);
   const [showResult, setShowResult] = useState(false);
 
-  // Real Geo-coordinates for India random points
+  // Clustered Geo-coordinates for a fuller, more colorful map
   const generateMockHeatmap = () => {
     const points = [];
-    for (let i = 0; i < 150; i++) {
+    const hubs = [
+      { lat: 28.61, lng: 77.20, basePM: 180 }, // Delhi
+      { lat: 19.07, lng: 72.87, basePM: 150 }, // Mumbai
+      { lat: 12.97, lng: 77.59, basePM: 120 }, // Bangalore
+      { lat: 22.57, lng: 88.36, basePM: 140 }, // Kolkata
+      { lat: 17.38, lng: 78.48, basePM: 130 }, // Hyderabad
+      { lat: 23.02, lng: 72.57, basePM: 160 }, // Ahmedabad
+      { lat: 18.52, lng: 73.85, basePM: 110 }, // Pune
+      { lat: 26.84, lng: 80.94, basePM: 140 }, // Lucknow
+    ];
+
+    // Generate clusters around hubs
+    hubs.forEach(hub => {
+      for (let i = 0; i < 50; i++) {
+        points.push({
+          id: `h-${hub.lat}-${i}`,
+          lat: hub.lat + (Math.random() - 0.5) * 6, // Concentrated but broad spread
+          lng: hub.lng + (Math.random() - 0.5) * 6,
+          pm: hub.basePM + (Math.random() - 0.5) * 60
+        });
+      }
+    });
+
+    // Background noise to fill the gaps
+    for (let i = 0; i < 200; i++) {
       points.push({
-        id: i,
+        id: `n-${i}`,
         lat: 8.4 + Math.random() * (37.6 - 8.4),
         lng: 68.7 + Math.random() * (97.2 - 68.7),
-        pm: Math.floor(Math.random() * 180) + 5
+        pm: Math.floor(Math.random() * 80) + 10
       });
     }
     return points;
@@ -190,26 +255,31 @@ function App() {
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                {heatmapData.map(point => (
-                  <Circle
-                    key={point.id}
-                    center={[point.lat, point.lng]}
-                    pathOptions={{ 
-                      fillColor: getPMColor(point.pm), 
-                      color: getPMColor(point.pm),
-                      fillOpacity: 0.6,
-                      weight: 1
-                    }}
-                    radius={30000}
-                  >
-                    <Tooltip direction="top" offset={[0, -10]} opacity={1}>
-                      <div className="map-tooltip">
-                        <strong>PM<sub>2.5</sub>: {point.pm} µg/m³</strong><br/>
-                        <span>Status: {getPMLabel(point.pm)}</span>
-                      </div>
-                    </Tooltip>
-                  </Circle>
-                ))}
+                
+                {mapMode === 'markers' ? (
+                  heatmapData.map(point => (
+                    <Circle
+                      key={point.id}
+                      center={[point.lat, point.lng]}
+                      pathOptions={{ 
+                        fillColor: getPMColor(point.pm), 
+                        color: getPMColor(point.pm),
+                        fillOpacity: 0.6,
+                        weight: 1
+                      }}
+                      radius={30000}
+                    >
+                      <Tooltip direction="top" offset={[0, -10]} opacity={1}>
+                        <div className="map-tooltip">
+                          <strong>PM<sub>2.5</sub>: {point.pm} µg/m³</strong><br/>
+                          <span>Status: {getPMLabel(point.pm)}</span>
+                        </div>
+                      </Tooltip>
+                    </Circle>
+                  ))
+                ) : (
+                  <HeatmapLayer points={heatmapData} />
+                )}
               </MapContainer>
               <div className="map-legend">
                 <div className="legend-item"><span style={{backgroundColor: '#48BB78'}}></span> Good</div>
@@ -219,8 +289,21 @@ function App() {
               </div>
             </div>
             <div className="map-controls">
-              <button className="predict-btn" onClick={() => setHeatmapData(generateMockHeatmap())}>🔄 Randomize Regional Data</button>
-              <p className="small-text">This uses a real zoomable map layer with randomized hotspot data across India.</p>
+              <div className="mode-toggle-group">
+                <button 
+                  className={`toggle-btn ${mapMode === 'markers' ? 'active' : ''}`}
+                  onClick={() => setMapMode('markers')}
+                >
+                  📍 Points
+                </button>
+                <button 
+                  className={`toggle-btn ${mapMode === 'gradient' ? 'active' : ''}`}
+                  onClick={() => setMapMode('gradient')}
+                >
+                  🔥 Gradient
+                </button>
+              </div>
+              <button className="predict-btn" onClick={() => setHeatmapData(generateMockHeatmap())}>🔄 Randomize Data</button>
             </div>
           </div>
         </div>
